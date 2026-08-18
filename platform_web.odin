@@ -13,6 +13,8 @@ PLATFORM_WEB :: Platform_Interface {
 	get_window_render_glue = web_get_window_render_glue,
 	get_events = web_get_events,
 	set_window_title = web_set_window_title,
+	get_clipboard_text = web_get_clipboard_text,
+	set_clipboard_text = web_set_clipboard_text,
 	set_screen_size = web_set_screen_size,
 	get_screen_width = web_get_screen_width,
 	get_screen_height = web_get_screen_height,
@@ -375,6 +377,14 @@ web_clear_events :: proc() {
 
 web_set_window_title :: proc(title: string) {
 	js.set_document_title(title)
+}
+
+web_get_clipboard_text :: proc(allocator: runtime.Allocator) -> (string, bool) {
+	return {}, false
+}
+
+web_set_clipboard_text :: proc(text: string) -> bool {
+	return false
 }
 
 web_set_position :: proc(x: int, y: int) {

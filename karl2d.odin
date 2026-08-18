@@ -79,7 +79,7 @@ init :: proc(
 
 	// We allocate memory for the windowing backend and pass the blob of memory to it.
 	platform_state_alloc_error: runtime.Allocator_Error
-	
+
 	s.platform_state, platform_state_alloc_error = mem.alloc(
 		pf.state_size(),
 		allocator = s.allocator,
@@ -137,7 +137,7 @@ init :: proc(
 		s.render_backend_state,
 		window_render_glue,
 		pf.get_screen_width(),
-		pf.get_screen_height(), 
+		pf.get_screen_height(),
 		options,
 		s.allocator,
 	)
@@ -206,7 +206,7 @@ init :: proc(
 // frame times are up-to-date.
 //
 // Returns a bool that says if the player has attempted to close the window. It's up to the
-// application to decide if it wants to shut down or if it (for example) wants to show a 
+// application to decide if it wants to shut down or if it (for example) wants to show a
 // confirmation dialogue.
 //
 // Commonly used for creating the "main loop" of a game: `for k2.update() {}`
@@ -219,10 +219,10 @@ init :: proc(
 ////     k2.calculate_frame_time()
 ////     k2.process_events()
 ////     k2.update_audio_mixer()
-////     
+////
 ////     k2.clear(k2.BLUE)
 ////     k2.present()
-////     
+////
 ////     if k2.close_window_requested() {
 ////         break
 ////     }
@@ -423,7 +423,7 @@ process_events :: proc() {
 			s.proj_matrix = make_default_projection(e.width, e.height, _camera_flip_y())
 			_update_view_projection()
 
-		case Event_Window_Focused:			
+		case Event_Window_Focused:
 
 		case Event_Window_Unfocused:
 			for k in Keyboard_Key {
@@ -456,7 +456,7 @@ process_events :: proc() {
 	}
 }
 
-// Fetch a list of all events that happened this frame. Most games can use the `key_is_held`, 
+// Fetch a list of all events that happened this frame. Most games can use the `key_is_held`,
 // `mouse_button_went_down` etc procedures to check input state. But if you want a list of events
 // instead, then you can use this. These events will also include things like "Window Focus" events
 // and "Window Resize" events.
@@ -878,7 +878,7 @@ draw_rect_ex :: proc(r: Rect, origin: Vec2, rot: f32, c: Color) {
 // rectangles.
 draw_rect_outline :: proc(r: Rect, thickness: f32, color: Color) {
 	t := thickness
-	
+
 	// Based on DrawRectangleLinesEx from Raylib
 
 	top := Rect {
@@ -1143,12 +1143,12 @@ draw_texture_fit :: proc(
 			y + (dx + dest.w) * sin_rot + (dy + dest.h) * cos_rot,
 		}
 	}
-	
+
 	ts := Vec2{f32(texture.width), f32(texture.height)}
 
 	up := Vec2{source.x, source.y} / ts
 	us := Vec2{source.w, source.h} / ts
-	
+
 	c := tint
 
 	uv0 := up
@@ -1173,7 +1173,7 @@ draw_texture_fit :: proc(
 		uv2.y -= us.y
 		uv3.y += us.y
 		uv4.y -= us.y
-		uv5.y -= us.y		
+		uv5.y -= us.y
 	}
 
 	batch_vertex(tl, uv0, c)
@@ -1253,7 +1253,7 @@ measure_text :: proc(text: string, font_size: f32, font: Font = FONT_DEFAULT) ->
 				line_w += font_size * 2
 				continue
 			}
-			
+
 			g: ^Font_Baked_Glyph
 
 			for &r in font_object.static_glyph_ranges {
@@ -1437,7 +1437,7 @@ draw_text :: proc(
 			}
 
 			if c == '\n' {
-				char_offset.x = 0 
+				char_offset.x = 0
 				char_offset.y += font_object.static_line_spacing * scl
 				continue
 			}
@@ -2321,7 +2321,7 @@ load_audio_stream_from_file :: proc(filename: string) -> Audio_Stream {
 		if close_err := file_close(f); close_err != nil {
 			log.errorf("Failed closing file. Error: %v", close_err)
 		}
-		
+
 		return AUDIO_STREAM_NONE
 	}
 
@@ -2401,7 +2401,7 @@ load_audio_stream_from_file :: proc(filename: string) -> Audio_Stream {
 		if close_err := file_close(f); close_err != nil {
 			log.errorf("Failed closing file. Error: %v", close_err)
 		}
-				
+
 		free(vorbis_buffer.alloc_buffer, s.allocator)
 		return AUDIO_STREAM_NONE
 	}
@@ -2416,7 +2416,7 @@ load_audio_stream_from_file :: proc(filename: string) -> Audio_Stream {
 
 	if audio_clip_handle_add_err != nil {
 		log.errorf("Failed to load audio stream. Error: %v", audio_clip_handle_add_err)
-		
+
 		if close_err := file_close(f); close_err != nil {
 			log.errorf("Failed closing file. Error: %v", close_err)
 		}
@@ -2580,7 +2580,7 @@ destroy_audio_stream :: proc(stream: Audio_Stream) {
 }
 
 // Streams in new audio data from the audio stream. You need to call this once per frame in order
-// for the streaming to actually happen. 
+// for the streaming to actually happen.
 update_audio_stream :: proc(stream: Audio_Stream) {
 	sd := hm.get(&s.audio_streams, stream)
 
@@ -2606,10 +2606,10 @@ update_audio_stream :: proc(stream: Audio_Stream) {
 	}
 
 	audio_stream_remaining :: proc(as: ^Audio_Stream_Data, pab: ^Sound_Object, ab: ^Audio_Clip_Object) -> int {
-		remaining := as.buffer_write_pos - pab.offset 
+		remaining := as.buffer_write_pos - pab.offset
 
 		if remaining < 0 {
-			remaining = len(ab.samples) - pab.offset + as.buffer_write_pos 
+			remaining = len(ab.samples) - pab.offset + as.buffer_write_pos
 		}
 
 		return remaining
@@ -2627,7 +2627,7 @@ update_audio_stream :: proc(stream: Audio_Stream) {
 				raw_data(sd.file_read_buf[sd.file_read_buf_offset:]),
 				i32(len(sd.file_read_buf) - sd.file_read_buf_offset),
 				&channels,
-				&output, 
+				&output,
 				&samples,
 			)
 
@@ -2935,7 +2935,7 @@ update_audio_mixer :: proc() {
 	if ab.remaining_samples() > (3 * AUDIO_MIX_CHUNK_SIZE)/2 {
 		return
 	}
-	
+
 	// We are going to go past the end of the mix_buffer, so just hop to the start instead. It's
 	// 1 megabyte big, so hopping over a few bytes at the end is OK.
 	if (s.mix_buffer_offset + AUDIO_MIX_CHUNK_SIZE) > len(s.mix_buffer) {
@@ -2944,7 +2944,7 @@ update_audio_mixer :: proc() {
 
 	// A slice of the mixed samples we are going to output.
 	out := s.mix_buffer[s.mix_buffer_offset:s.mix_buffer_offset + AUDIO_MIX_CHUNK_SIZE]
-	
+
 	// Zero out old mixed data from buffer (the buffer is "circular", there may be old stuff in
 	// the `out` slice).
 	slice.zero(out)
@@ -3032,7 +3032,7 @@ update_audio_mixer :: proc() {
 			for ; dest_idx < dest_to_write; dest_idx += 1 {
 				src_pos := source_fractional_offset + f32(dest_idx) * dest_source_ratio
 				src_idx := int(src_pos)
-				
+
 				if src_idx >= len(source) {
 					break
 				}
@@ -3060,7 +3060,7 @@ update_audio_mixer :: proc() {
 			for ; dest_idx < dest_to_write; dest_idx += 1 {
 				src_pos := source_fractional_offset + f32(dest_idx) * dest_source_ratio
 				src_idx := int(src_pos)
-				
+
 				if src_idx >= len(source_stereo) {
 					break
 				}
@@ -3156,11 +3156,11 @@ update_audio_mixer :: proc() {
 		if volume_start == volume_end && volume_end == 0 {
 			continue
 		}
-		
+
 		pan_start := clamp(settings.pan, -1, 1)
 		pan_end := clamp(move_towards(settings.pan, target_settings.pan, adjust_parameter_delta), -1, 1)
 		settings.pan = pan_end
-		
+
 		// Use cos/sine to get a constant-power audio curve. This means that the sound won't get
 		// quieter in the middle, but will instead just pan.
 		pan_stereo_start := [2]f32 {
@@ -3175,7 +3175,7 @@ update_audio_mixer :: proc() {
 
 		interpolate := data.sample_rate != AUDIO_MIX_SAMPLE_RATE || pitch != 1
 		source_dest_ratio: f32 = 1
-		
+
 		if interpolate {
 			source_dest_ratio = (pitch * f32(data.sample_rate)) / f32(AUDIO_MIX_SAMPLE_RATE)
 		}
@@ -3198,7 +3198,7 @@ update_audio_mixer :: proc() {
 			pan_stereo_start,
 			pan_stereo_end,
 		)
-		
+
 		if interpolate {
 			num_mixed_f32 := f32(num_mixed) * source_dest_ratio
 			fraction_advance := ps.offset_fraction + num_mixed_f32
@@ -3206,7 +3206,7 @@ update_audio_mixer :: proc() {
 			// The fraction advance may become larger than 1, in which case the offset needs to eat
 			// the integer part.
 			ps.offset += int(fraction_advance) * source_channels
-			
+
 			ps.offset_fraction = linalg.fract(fraction_advance)
 		} else {
 			ps.offset += num_mixed * source_channels
@@ -3236,7 +3236,7 @@ update_audio_mixer :: proc() {
 					pan_stereo_start,
 					pan_stereo_end,
 				)
-				
+
 				if interpolate {
 					num_mixed_f32 := f32(num_mixed) * source_dest_ratio
 					fraction_advance := ps.offset_fraction + num_mixed_f32
@@ -3244,7 +3244,7 @@ update_audio_mixer :: proc() {
 					// The fraction advance may become larger than 1, in which case the offset needs to eat
 					// the integer part.
 					ps.offset += int(fraction_advance) * source_channels
-					
+
 					ps.offset_fraction = linalg.fract(fraction_advance)
 				} else {
 					ps.offset += num_mixed * source_channels
@@ -3355,7 +3355,7 @@ create_render_texture :: proc(width: int, height: int) -> Render_Texture {
 	texture, render_target := rb.create_render_texture(width, height)
 
 	return {
-		texture = { 
+		texture = {
 			handle = texture,
 			width = width,
 			height = height,
@@ -3640,7 +3640,7 @@ load_static_font_from_bytes :: proc(
 
 	for c in codepoints {
 		idx := stbtt.FindGlyphIndex(&font_info, c)
-		
+
 		if idx > 0 {
 			advance: i32
 			stbtt.GetGlyphHMetrics(&font_info, idx, &advance, nil)
@@ -3730,7 +3730,7 @@ load_static_font_from_bytes :: proc(
 	for atlas_size <= MAX_ATLAS_SIZE {
 		rp_ctx: stbrp.Context
 		rp_nodes := make([]stbrp.Node, i32(atlas_size), s.frame_allocator)
-		
+
 		stbrp.init_target(
 			&rp_ctx,
 			i32(atlas_size),
@@ -3738,7 +3738,7 @@ load_static_font_from_bytes :: proc(
 			raw_data(rp_nodes),
 			i32(len(rp_nodes)),
 		)
-		
+
 		rect_pack_res := stbrp.pack_rects(
 			&rp_ctx,
 			raw_data(glyphs_pack_rects),
@@ -3852,7 +3852,7 @@ load_static_font_from_bytes :: proc(
 		static_glyph_ranges = slice.clone(glyph_ranges[:], s.allocator),
 		static_font_size = font_size,
 
-		// Fomula from stbtt.GetFontVMetrics docs 
+		// Fomula from stbtt.GetFontVMetrics docs
 		static_line_spacing = f32(ascent - descent + line_gap) * scale_factor,
 	}
 
@@ -4013,7 +4013,7 @@ load_shader_from_file :: proc(
 	}
 
 	fragment_source: []byte
-	
+
 	if fragment_filename == vertex_filename {
 		fragment_source = vertex_source
 	} else {
@@ -4079,7 +4079,7 @@ load_shader_from_bytes :: proc(
 			size = constant_desc.size,
 		}
 
-		shd.constants[cidx] = loc 
+		shd.constants[cidx] = loc
 		constant_offset += constant_desc.size
 
 		if constant_desc.name != "" {
@@ -4479,6 +4479,24 @@ open_url :: proc(url: string) -> Open_URL_Error {
 	return .None
 }
 
+// Get the current clipboard text as UTF-8.
+//
+// An empty string with `ok` set to true means that the clipboard contains empty text. An
+// empty string with `ok` set to false means that getting the clipboard text failed.
+//
+// The returned text is owned by the caller. Free it with `delete(text, allocator)` when
+// it is no longer needed.
+get_clipboard_text :: proc(allocator := context.allocator) -> (text: string, ok: bool) {
+	assert_initialized()
+	return pf.get_clipboard_text(allocator)
+}
+
+// Set the clipboard text as UTF-8. Returns false if setting the clipboard text failed.
+set_clipboard_text :: proc(text: string) -> (ok: bool) {
+	assert_initialized()
+	return pf.set_clipboard_text(text)
+}
+
 //--------------//
 // EXPERIMENTAL //
 //--------------//
@@ -4514,7 +4532,7 @@ ui_button :: proc(r: Rect, text: string) -> bool {
 			bg_color = BLACK
 		}
 	}
-	
+
 	draw_rect(r, bg_color)
 	draw_rect_outline(r, 1, border_color)
 
@@ -4549,9 +4567,9 @@ Color :: [4]u8
 BLACK        :: Color { 0, 0, 0, 255 }
 WHITE        :: Color { 255, 255, 255, 255 }
 BLANK        :: Color { 0, 0, 0, 0 }
-LIGHT_GRAY   :: Color { 183, 183, 183, 255 } 
-GRAY         :: Color { 100, 100, 100, 255} 
-DARK_GRAY    :: Color { 66, 66, 66, 255} 
+LIGHT_GRAY   :: Color { 183, 183, 183, 255 }
+GRAY         :: Color { 100, 100, 100, 255}
+DARK_GRAY    :: Color { 66, 66, 66, 255}
 BLUE         :: Color { 25, 198, 236, 255 }
 DARK_BLUE    :: Color { 7, 47, 88, 255 }
 LIGHT_BLUE   :: Color { 200, 230, 255, 255 }
@@ -4809,7 +4827,7 @@ Shader_Input :: struct {
 
 Pixel_Format :: enum {
 	Unknown,
-	
+
 	RGBA_32_Float,
 	RGB_32_Float,
 	RG_32_Float,
@@ -4920,7 +4938,7 @@ FONT_NONE :: Font(0)
 
 // The default font. It's a font called "roboto". It is loaded from `DEFAULT_FONT_DATA` on Karl2D is
 // initialized.
-FONT_DEFAULT :: Font(1) 
+FONT_DEFAULT :: Font(1)
 
 TEXTURE_NONE :: Texture_Handle {}
 RENDER_TARGET_NONE :: Render_Target_Handle {}
@@ -4964,7 +4982,7 @@ VORBIS_STATE_SIZE :: 300 * mem.Kilobyte
 
 Audio_Stream_Data :: struct {
 	handle: Audio_Stream,
-	
+
 	vorbis: ^stbv.vorbis,
 	vorbis_buffer: stbv.vorbis_alloc,
 	sound: Sound,
@@ -5122,7 +5140,7 @@ State :: struct {
 	render_backend_state: rawptr,
 
 	fs: fs.FontContext,
-	
+
 	close_window_requested: bool,
 
 	// All events for this frame. Cleared when `process_events` run
@@ -5375,7 +5393,7 @@ Gamepad_Index :: int
 
 Gamepad_Axis :: enum {
 	None,
-	
+
 	Left_Stick_X,
 	Left_Stick_Y,
 	Right_Stick_X,
@@ -5386,7 +5404,7 @@ Gamepad_Axis :: enum {
 
 Gamepad_Button :: enum {
 	None,
-	
+
 	// DPAD buttons
 	Left_Face_Up,
 	Left_Face_Down,
@@ -5792,7 +5810,7 @@ batch_vertex :: proc(v: Vec2, uv: Vec2, color: Color) {
 	pos_offset := shd.default_input_offsets[.Position]
 	uv_offset := shd.default_input_offsets[.UV]
 	color_offset := shd.default_input_offsets[.Color]
-	
+
 	mem.set(&s.vertex_buffer_cpu[base_offset], 0, shd.vertex_size)
 
 	if pos_offset != -1 {
@@ -5822,7 +5840,7 @@ batch_vertex :: proc(v: Vec2, uv: Vec2, color: Color) {
 
 		override_offset += sz
 	}
-	
+
 	s.vertex_buffer_cpu_used += shd.vertex_size
 }
 
@@ -5938,7 +5956,7 @@ get_shader_input_default_type :: proc(name: string, type: Shader_Input_Type) -> 
 
 get_shader_format_num_components :: proc(format: Pixel_Format) -> int {
 	switch format {
-	case .Unknown: return 0 
+	case .Unknown: return 0
 	case .RGBA_32_Float: return 4
 	case .RGB_32_Float: return 3
 	case .RG_32_Float: return 2

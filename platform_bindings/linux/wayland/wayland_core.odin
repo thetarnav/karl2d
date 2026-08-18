@@ -12,6 +12,7 @@ foreign lib {
 	display_dispatch :: proc(display: ^Display) -> c.int ---
 	display_flush :: proc(display: ^Display) -> c.int ---
 	display_dispatch_pending :: proc(display: ^Display) -> c.int ---
+	display_get_fd :: proc(display: ^Display) -> c.int ---
 	proxy_marshal_flags :: proc(
 		proxy: ^Proxy,
 		opcode: u32,

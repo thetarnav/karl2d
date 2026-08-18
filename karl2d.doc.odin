@@ -983,6 +983,18 @@ Open_URL_Error :: enum {
 // Returns Open_URL_Error.None if the call was succesful.
 open_url :: proc(url: string) -> Open_URL_Error
 
+// Get the current clipboard text as UTF-8.
+//
+// An empty string with `text_ok` set to true means that the clipboard contains empty text. An
+// empty string with `text_ok` set to false means that getting the clipboard text failed.
+//
+// The returned text is owned by the caller. Free it with `delete(raw_data(text), allocator)` when
+// it is no longer needed.
+get_clipboard_text :: proc(allocator := context.allocator) -> (text: string, text_ok: bool)
+
+// Set the clipboard text as UTF-8. Returns false if setting the clipboard text failed.
+set_clipboard_text :: proc(text: string) -> (text_ok: bool)
+
 //--------------//
 // EXPERIMENTAL //
 //--------------//

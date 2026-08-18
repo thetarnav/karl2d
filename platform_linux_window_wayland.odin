@@ -24,6 +24,8 @@ LINUX_WINDOW_WAYLAND :: Linux_Window_Interface {
 	set_cursor = wl_set_cursor,
 	destroy_custom_cursor = wl_destroy_custom_cursor,
 	set_internal_state = wl_set_internal_state,
+	get_clipboard_text = wl_get_clipboard_text,
+	set_clipboard_text = wl_set_clipboard_text,
 }
 
 import "base:runtime"
@@ -32,6 +34,7 @@ import "core:strings"
 import "core:c"
 import "core:math"
 import "core:sys/linux"
+import "core:sys/posix"
 import "core:time"
 import hm "core:container/handle_map"
 
@@ -65,6 +68,7 @@ wl_init :: proc(
 	s.scale = 1
 	s.odin_ctx = context
 	hm.dynamic_init(&s.custom_cursors, allocator)
+	s.clipboard_mimes = make([dynamic]string, allocator = allocator)
 
 	s.xkb_context = xkb.context_new(.No_Flags)
 
@@ -80,6 +84,12 @@ wl_init :: proc(
 
 	// Initializes pointer and keyboard based on seat capabilities.
 	wl.display_roundtrip(s.display)
+
+	if s.data_device_manager != nil && s.seat != nil {
+		s.data_device = wl.data_device_manager_get_data_device(s.data_device_manager, s.seat)
+		wl.add_listener(s.data_device, &data_device_listener, nil)
+		wl.display_roundtrip(s.display)
+	}
 
 	// Sets default size that gets used if the compositor doesn't suggest a size.
 	s.last_configure_width = screen_width
@@ -263,6 +273,15 @@ registry_listener := wl.Registry_Listener {
 				registry,
 				name,
 				&wl.wp_cursor_shape_manager_v1_interface,
+				version,
+			)
+
+		case wl.data_device_manager_interface.name:
+			s.data_device_manager = wl.registry_bind(
+				wl.Data_Device_Manager,
+				registry,
+				name,
+				&wl.data_device_manager_interface,
 				version,
 			)
 		}
@@ -482,6 +501,9 @@ key_handler :: proc "c" (
 	state: c.uint32_t,
 ) {
 	context = runtime.default_context()
+	if serial != 0 {
+		s.input_serial = u32(serial)
+	}
 
 	// Wayland emits evdev events, and the keycodes are shifted
 	// from the expected xkb events... Just add 8 to it.
@@ -571,7 +593,7 @@ pointer_listener := wl.Pointer_Listener {
 		surface_y: wl.Fixed,
 	) {
 		context = s.odin_ctx
-
+		
 		// surface_x and surface_y are fixed point 24.8 variables. 
 		// Just bitshift them to remove the decimal part and obtain 
 		// a screen coordinate
@@ -588,6 +610,9 @@ pointer_listener := wl.Pointer_Listener {
 		state: c.uint32_t,
 	) {
 		context = s.odin_ctx
+		if serial != 0 {
+			s.input_serial = u32(serial)
+		}
 
 		btn: Mouse_Button
 		switch button {
@@ -696,7 +721,288 @@ fractional_scale_listener := wl.WP_Fractional_Scale_V1_Listener {
 	},
 }
 
+WAYLAND_CLIPBOARD_MAX_BYTES :: 4 * 1024 * 1024
+WAYLAND_CLIPBOARD_TRANSFER_TIMEOUT :: 250 * time.Millisecond
+
+wl_clipboard_clear_mimes :: proc() {
+	for mime in s.clipboard_mimes {
+		free(raw_data(mime), s.allocator)
+	}
+	runtime.clear(&s.clipboard_mimes)
+}
+
+wl_clipboard_clear_pending_mimes :: proc() {
+	for mime in s.clipboard_pending_mimes {
+		free(raw_data(mime), s.allocator)
+	}
+	runtime.clear(&s.clipboard_pending_mimes)
+}
+
+data_device_listener := wl.Data_Device_Listener {
+	data_offer = proc "c" (data: rawptr, device: ^wl.Data_Device, offer: ^wl.Data_Offer) {
+		context = s.odin_ctx
+		if s.clipboard_pending_offer != nil && s.clipboard_pending_offer != offer {
+			wl.data_offer_destroy(s.clipboard_pending_offer)
+			wl_clipboard_clear_pending_mimes()
+		}
+		s.clipboard_pending_offer = offer
+		wl.add_listener(offer, &data_offer_listener, nil)
+	},
+	enter = proc "c" (data: rawptr, device: ^wl.Data_Device, serial: u32, surface: ^wl.Surface, x, y: wl.Fixed, offer: ^wl.Data_Offer) {},
+	leave = proc "c" (data: rawptr, device: ^wl.Data_Device) {},
+	motion = proc "c" (data: rawptr, device: ^wl.Data_Device, time: u32, x, y: wl.Fixed) {},
+	drop = proc "c" (data: rawptr, device: ^wl.Data_Device) {},
+	selection = proc "c" (data: rawptr, device: ^wl.Data_Device, offer: ^wl.Data_Offer) {
+		context = s.odin_ctx
+		selection_changed := s.clipboard_offer != offer
+		if s.clipboard_offer != nil && s.clipboard_offer != offer {
+			wl.data_offer_destroy(s.clipboard_offer)
+		}
+		if s.clipboard_pending_offer != nil && s.clipboard_pending_offer != offer {
+			wl.data_offer_destroy(s.clipboard_pending_offer)
+			wl_clipboard_clear_pending_mimes()
+		}
+		s.clipboard_offer = offer
+		if selection_changed {
+			wl_clipboard_clear_mimes()
+		}
+		if s.clipboard_pending_offer == offer {
+			delete(s.clipboard_mimes)
+			s.clipboard_mimes = s.clipboard_pending_mimes
+			s.clipboard_pending_mimes = nil
+			s.clipboard_mime_offer = offer
+		} else if selection_changed {
+			s.clipboard_mime_offer = offer
+		}
+		s.clipboard_pending_offer = nil
+	},
+}
+
+data_offer_listener := wl.Data_Offer_Listener {
+	offer = proc "c" (data: rawptr, offer: ^wl.Data_Offer, mime_type: cstring) {
+		context = s.odin_ctx
+		if offer == s.clipboard_pending_offer {
+			append(&s.clipboard_pending_mimes, strings.clone(string(mime_type), s.allocator))
+		} else if offer == s.clipboard_offer && offer == s.clipboard_mime_offer {
+			append(&s.clipboard_mimes, strings.clone(string(mime_type), s.allocator))
+		}
+	},
+	source_actions = proc "c" (data: rawptr, offer: ^wl.Data_Offer, source_actions: u32) {},
+	action = proc "c" (data: rawptr, offer: ^wl.Data_Offer, dnd_action: u32) {},
+}
+
+wl_get_clipboard_text :: proc(allocator: runtime.Allocator) -> (string, bool) {
+	if s.data_device == nil {
+		return "", false
+	}
+
+	// data_offer and selection are queued separately. Dispatch before touching the offer so the
+	// selected pointer and its MIME list are current.
+	if wl.display_dispatch_pending(s.display) < 0 || s.clipboard_offer == nil {
+		return "", false
+	}
+	if len(s.clipboard_mimes) == 0 {
+		if wl.display_roundtrip(s.display) < 0 || s.clipboard_offer == nil {
+			return "", false
+		}
+	}
+	mime := ""
+	for candidate in s.clipboard_mimes {
+		if candidate == wl.MIME_TEXT_PLAIN_UTF8 {
+			mime = candidate
+			break
+		}
+		if candidate == wl.MIME_TEXT_PLAIN && mime == "" {
+			mime = candidate
+		}
+	}
+	if mime == "" {
+		return "", false
+	}
+
+	fds: [2]posix.FD
+	if posix.pipe(&fds) != .OK {
+		return "", false
+	}
+	read_fd := linux.Fd(fds[0])
+	write_fd := linux.Fd(fds[1])
+	defer linux.close(read_fd)
+	defer linux.close(write_fd)
+	flags, flags_err := linux.fcntl_getfl(read_fd, linux.F_GETFL)
+	write_flags, write_flags_err := linux.fcntl_getfl(write_fd, linux.F_GETFL)
+	if flags_err != .NONE || write_flags_err != .NONE ||
+		linux.fcntl_setfl(read_fd, linux.F_SETFL, flags | {.NONBLOCK}) != .NONE ||
+		linux.fcntl_setfl(write_fd, linux.F_SETFL, write_flags | {.NONBLOCK}) != .NONE {
+		return "", false
+	}
+
+	wl.data_offer_receive(s.clipboard_offer, strings.clone_to_cstring(mime, frame_allocator), c.int32_t(write_fd))
+	flush_deadline := time.tick_add(time.tick_now(), WAYLAND_CLIPBOARD_TRANSFER_TIMEOUT)
+	for wl.display_flush(s.display) < 0 && time.tick_diff(flush_deadline, time.tick_now()) > 0 {
+		pfd := posix.pollfd {
+			fd = posix.FD(wl.display_get_fd(s.display)),
+			events = {posix.Poll_Event_Bits.OUT},
+		}
+		if posix.poll(&pfd, 1, 10) < 0 {
+			break
+		}
+	}
+	if time.tick_diff(flush_deadline, time.tick_now()) <= 0 {
+		return "", false
+	}
+	buffer := make([]u8, WAYLAND_CLIPBOARD_MAX_BYTES, s.allocator)
+	used := 0
+	deadline := time.tick_add(time.tick_now(), WAYLAND_CLIPBOARD_TRANSFER_TIMEOUT)
+	for time.tick_diff(deadline, time.tick_now()) > 0 {
+		if used == len(buffer) {
+			free(raw_data(buffer), s.allocator)
+			return "", false
+		}
+		n, read_err := linux.read(read_fd, buffer[used:])
+		if n > 0 {
+			used += n
+			continue
+		}
+		if n == 0 {
+			result := strings.clone(string(buffer[:used]), allocator)
+			free(raw_data(buffer), s.allocator)
+			return result, true
+		}
+		if read_err != .EINTR && read_err != .EAGAIN && read_err != .EWOULDBLOCK {
+			free(raw_data(buffer), s.allocator)
+			return "", false
+		}
+
+		fds := [2]posix.pollfd {
+			{fd = posix.FD(read_fd), events = {posix.Poll_Event_Bits.IN}},
+			{fd = posix.FD(wl.display_get_fd(s.display)), events = {posix.Poll_Event_Bits.IN}},
+		}
+		if posix.poll(&fds[0], 2, 10) < 0 {
+			free(raw_data(buffer), s.allocator)
+			return "", false
+		}
+		if .IN in fds[1].revents || .HUP in fds[1].revents || .ERR in fds[1].revents {
+			if wl.display_dispatch(s.display) < 0 {
+				free(raw_data(buffer), s.allocator)
+				return "", false
+			}
+		}
+		if .ERR in fds[0].revents || .NVAL in fds[0].revents {
+			free(raw_data(buffer), s.allocator)
+			return "", false
+		}
+	}
+	free(raw_data(buffer), s.allocator)
+	return "", false
+}
+
+wl_clipboard_clear_source :: proc() {
+	if s.clipboard_source != nil {
+		wl.data_source_destroy(s.clipboard_source)
+		s.clipboard_source = nil
+	}
+	if s.clipboard_owned_text != nil {
+		free(raw_data(s.clipboard_owned_text), s.allocator)
+		s.clipboard_owned_text = nil
+	}
+}
+
+wl_set_clipboard_text :: proc(text: string) -> bool {
+	if s.data_device_manager == nil || s.data_device == nil || len(text) > WAYLAND_CLIPBOARD_MAX_BYTES {
+		return false
+	}
+	wl_clipboard_clear_source()
+	s.clipboard_owned_text = make([]u8, len(text), s.allocator)
+	copy(s.clipboard_owned_text, text)
+	s.clipboard_source = wl.data_device_manager_create_data_source(s.data_device_manager)
+	if s.clipboard_source == nil {
+		wl_clipboard_clear_source()
+		return false
+	}
+	wl.add_listener(s.clipboard_source, &data_source_listener, nil)
+	wl.data_source_offer(s.clipboard_source, wl.MIME_TEXT_PLAIN_UTF8)
+	wl.data_source_offer(s.clipboard_source, wl.MIME_TEXT_PLAIN)
+	if s.input_serial == 0 {
+		wl_clipboard_clear_source()
+		return false
+	}
+	wl.data_device_set_selection(s.data_device, s.clipboard_source, s.input_serial)
+	if wl.display_flush(s.display) != 0 {
+		wl_clipboard_clear_source()
+		return false
+	}
+	return true
+}
+
+data_source_listener := wl.Data_Source_Listener {
+	target = proc "c" (data: rawptr, source: ^wl.Data_Source, mime_type: cstring) {},
+	send = proc "c" (data: rawptr, source: ^wl.Data_Source, mime_type: cstring, fd: c.int32_t) {
+		context = s.odin_ctx
+		write_fd := linux.Fd(fd)
+		flags, flags_err := linux.fcntl_getfl(write_fd, linux.F_GETFL)
+		if flags_err != .NONE || linux.fcntl_setfl(write_fd, linux.F_SETFL, flags | {.NONBLOCK}) != .NONE {
+			linux.close(write_fd)
+			return
+		}
+		if s.clipboard_owned_text != nil {
+			bytes := s.clipboard_owned_text
+			deadline := time.tick_add(time.tick_now(), WAYLAND_CLIPBOARD_TRANSFER_TIMEOUT)
+			for len(bytes) > 0 && time.tick_diff(deadline, time.tick_now()) > 0 {
+				n, err := linux.write(write_fd, bytes)
+				if n > 0 {
+					bytes = bytes[n:]
+					continue
+				}
+				if err == .EINTR {
+					continue
+				}
+				if err != .EAGAIN && err != .EWOULDBLOCK {
+					break
+				}
+				pfd := posix.pollfd {
+					fd = posix.FD(write_fd),
+					events = {posix.Poll_Event_Bits.OUT},
+				}
+				if posix.poll(&pfd, 1, 10) < 0 {
+					break
+				}
+			}
+		}
+		linux.close(write_fd)
+	},
+	cancelled = proc "c" (data: rawptr, source: ^wl.Data_Source) {
+		context = s.odin_ctx
+		wl_clipboard_clear_source()
+	},
+	dnd_drop_performed = proc "c" (data: rawptr, source: ^wl.Data_Source) {},
+	dnd_finished = proc "c" (data: rawptr, source: ^wl.Data_Source) {},
+	action = proc "c" (data: rawptr, source: ^wl.Data_Source, dnd_action: u32) {},
+}
+
 wl_shutdown :: proc() {
+	wl_clipboard_clear_source()
+	if s.clipboard_offer != nil {
+		wl.data_offer_destroy(s.clipboard_offer)
+		s.clipboard_offer = nil
+	}
+	if s.clipboard_pending_offer != nil {
+		wl.data_offer_destroy(s.clipboard_pending_offer)
+		s.clipboard_pending_offer = nil
+	}
+	s.clipboard_mime_offer = nil
+	wl_clipboard_clear_mimes()
+	wl_clipboard_clear_pending_mimes()
+	delete(s.clipboard_mimes)
+	delete(s.clipboard_pending_mimes)
+	if s.data_device != nil {
+		wl.data_device_release(s.data_device)
+		s.data_device = nil
+	}
+	if s.data_device_manager != nil {
+		wl.data_device_manager_release(s.data_device_manager)
+		s.data_device_manager = nil
+	}
+
 	for it := hm.dynamic_iterator_make(&s.custom_cursors); cd, _ in hm.dynamic_iterate(&it) {
 		wl.wp_viewport_destroy(cd.viewport)
 		wl.surface_destroy(cd.surface)
@@ -1251,8 +1557,18 @@ WL_State :: struct {
 	keyboard: ^wl.Keyboard,
 	pointer: ^wl.Pointer,
 	pointer_enter_serial: u32,
+	input_serial: u32,
 	cursor_hidden: bool,
 	shm: ^wl.SHM,
+	data_device_manager: ^wl.Data_Device_Manager,
+	data_device: ^wl.Data_Device,
+	clipboard_offer: ^wl.Data_Offer,
+	clipboard_pending_offer: ^wl.Data_Offer,
+	clipboard_mime_offer: ^wl.Data_Offer,
+	clipboard_mimes: [dynamic]string,
+	clipboard_pending_mimes: [dynamic]string,
+	clipboard_source: ^wl.Data_Source,
+	clipboard_owned_text: []u8,
 	cursor_surface: ^wl.Surface,
 	cursor_theme: ^wl.Cursor_Theme,
 
@@ -1295,4 +1611,3 @@ WL_State :: struct {
 }
 
 s: ^WL_State
-

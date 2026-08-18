@@ -9,6 +9,36 @@ import NS "core:sys/darwin/Foundation"
 
 msgSend :: intrinsics.objc_send
 
+foreign import AppKit "system:AppKit.framework"
+
+@(link_prefix="NSPasteboardType")
+foreign AppKit {
+	PasteboardTypeString: ^NS.String
+}
+
+@(objc_class="NSPasteboard")
+Pasteboard :: struct { using _: NS.Object }
+
+Pasteboard_generalPasteboard :: proc "c" () -> ^Pasteboard {
+	return msgSend(^Pasteboard, Pasteboard, "generalPasteboard")
+}
+
+Pasteboard_stringForType :: proc "c" (self: ^Pasteboard, type: ^NS.String) -> ^NS.String {
+	return msgSend(^NS.String, self, "stringForType:", type)
+}
+
+Pasteboard_clearContents :: proc "c" (self: ^Pasteboard) -> NS.Integer {
+	return msgSend(NS.Integer, self, "clearContents")
+}
+
+Pasteboard_setStringForType :: proc "c" (
+	self: ^Pasteboard,
+	string: ^NS.String,
+	type: ^NS.String,
+) -> NS.BOOL {
+	return msgSend(NS.BOOL, self, "setString:forType:", string, type)
+}
+
 // NSApplication presentation options (for fullscreen mode)
 Application_setPresentationOptions :: proc "c" (self: ^NS.Application, options: NS.ApplicationPresentationOptions) {
 	msgSend(nil, self, "setPresentationOptions:", options)

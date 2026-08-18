@@ -13,6 +13,7 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:time"
 import "core:slice"
+import "core:strings"
 import hm "core:container/handle_map"
 import "log"
 
@@ -24,6 +25,8 @@ PLATFORM_MAC :: Platform_Interface {
 	get_window_render_glue = mac_get_window_render_glue,
 	get_events = mac_get_events,
 	set_window_title = mac_set_window_title,
+	get_clipboard_text = mac_get_clipboard_text,
+	set_clipboard_text = mac_set_clipboard_text,
 	set_screen_size = mac_set_screen_size,
 	get_screen_width = mac_get_screen_width,
 	get_screen_height = mac_get_screen_height,
@@ -227,7 +230,7 @@ mac_init :: proc(
 				scale := f32(s.window->backingScaleFactor())
 				new_width := int(f32(content_rect.size.width) * scale)
 				new_height := int(f32(content_rect.size.height) * scale)
-	
+
 				if new_width != s.screen_width || new_height != s.screen_height {
 					s.screen_width = new_width
 					s.screen_height = new_height
@@ -445,7 +448,7 @@ mac_get_events :: proc(events: ^[dynamic]Event) {
 			scale := NS.Float(s.window->backingScaleFactor())
 			px := loc.x * scale
 			py := NS.Float(s.screen_height) - loc.y * scale
-			
+
 			if s.mouse_locked {
 				dx := f32(ce.Event_deltaX(event)) * f32(s.window->backingScaleFactor())
 				dy := f32(ce.Event_deltaY(event)) * f32(s.window->backingScaleFactor())
@@ -522,6 +525,54 @@ mac_get_screen_height :: proc() -> int {
 mac_set_window_title :: proc(title: string) {
 	title_str := NS.String_alloc()->initWithOdinString(title)
 	s.window->setTitle(title_str)
+}
+
+mac_get_clipboard_text :: proc(allocator: runtime.Allocator) -> (string, bool) {
+	NS.scoped_autoreleasepool()
+
+	pasteboard := ce.Pasteboard_generalPasteboard()
+	if pasteboard == nil {
+		log.error("Failed to access the macOS general pasteboard.")
+		return "", false
+	}
+
+	native_text := ce.Pasteboard_stringForType(pasteboard, ce.PasteboardTypeString)
+	if native_text == nil {
+		return "", false
+	}
+
+	text := strings.clone(native_text->odinString(), allocator)
+	return text, true
+}
+
+mac_set_clipboard_text :: proc(text: string) -> bool {
+	NS.scoped_autoreleasepool()
+
+	pasteboard := ce.Pasteboard_generalPasteboard()
+	if pasteboard == nil {
+		log.error("Failed to access the macOS general pasteboard.")
+		return false
+	}
+
+	if ce.Pasteboard_clearContents(pasteboard) < 0 {
+		log.error("Failed to clear the macOS general pasteboard.")
+		return false
+	}
+
+	native_text := NS.String_alloc()->initWithOdinString(text)
+	if native_text == nil {
+		log.error("Failed to create an NSString for the clipboard text.")
+		return false
+	}
+
+	set_ok := ce.Pasteboard_setStringForType(pasteboard, native_text, ce.PasteboardTypeString)
+	native_text->release()
+	if !set_ok {
+		log.error("Failed to write text to the macOS general pasteboard.")
+		return false
+	}
+
+	return true
 }
 
 mac_set_window_position :: proc(x: int, y: int) {
@@ -1086,7 +1137,7 @@ poll_for_new_controllers :: proc() {
 				break
 			}
 		}
-		
+
 		s.gamepads[available_slot].controller = controller
 		s.gamepads[available_slot].extended_gamepad = extended_gamepad
 		s.gamepads[available_slot].button_inputs = make_button_inputs(extended_gamepad)
@@ -1138,7 +1189,7 @@ remove_controller :: proc(controller: ^gc.Controller) {
 					stop_haptic_player(&player)
 				}
 			}
-			
+
 			// no need to release controller, extended_gamepad, or button_inputs;
 			// the gamecontroller framework owns the these
 			gamepad = {}
