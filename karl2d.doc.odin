@@ -35,7 +35,7 @@ init :: proc(
 // frame times are up-to-date.
 //
 // Returns a bool that says if the player has attempted to close the window. It's up to the
-// application to decide if it wants to shut down or if it (for example) wants to show a 
+// application to decide if it wants to shut down or if it (for example) wants to show a
 // confirmation dialogue.
 //
 // Commonly used for creating the "main loop" of a game: `for k2.update() {}`
@@ -48,10 +48,10 @@ init :: proc(
 ////     k2.calculate_frame_time()
 ////     k2.process_events()
 ////     k2.update_audio_mixer()
-////     
+////
 ////     k2.clear(k2.BLUE)
 ////     k2.present()
-////     
+////
 ////     if k2.close_window_requested() {
 ////         break
 ////     }
@@ -103,7 +103,7 @@ present :: proc()
 // Called by `update`, but can be called manually if you need more control.
 process_events :: proc()
 
-// Fetch a list of all events that happened this frame. Most games can use the `key_is_held`, 
+// Fetch a list of all events that happened this frame. Most games can use the `key_is_held`,
 // `mouse_button_went_down` etc procedures to check input state. But if you want a list of events
 // instead, then you can use this. These events will also include things like "Window Focus" events
 // and "Window Resize" events.
@@ -631,7 +631,7 @@ load_audio_stream_from_bytes :: proc(bytes: []u8) -> Audio_Stream
 destroy_audio_stream :: proc(stream: Audio_Stream)
 
 // Streams in new audio data from the audio stream. You need to call this once per frame in order
-// for the streaming to actually happen. 
+// for the streaming to actually happen.
 update_audio_stream :: proc(stream: Audio_Stream)
 
 // Start playing an audio stream. Returns a `Sound`, which you can control using
@@ -985,15 +985,15 @@ open_url :: proc(url: string) -> Open_URL_Error
 
 // Get the current clipboard text as UTF-8.
 //
-// An empty string with `text_ok` set to true means that the clipboard contains empty text. An
-// empty string with `text_ok` set to false means that getting the clipboard text failed.
+// An empty string with `ok` set to true means that the clipboard contains empty text. An
+// empty string with `ok` set to false means that getting the clipboard text failed.
 //
-// The returned text is owned by the caller. Free it with `delete(raw_data(text), allocator)` when
+// The returned text is owned by the caller. Free it with `delete(text, allocator)` when
 // it is no longer needed.
-get_clipboard_text :: proc(allocator := context.allocator) -> (text: string, text_ok: bool)
+get_clipboard_text :: proc(allocator := context.allocator) -> (text: string, ok: bool)
 
 // Set the clipboard text as UTF-8. Returns false if setting the clipboard text failed.
-set_clipboard_text :: proc(text: string) -> (text_ok: bool)
+set_clipboard_text :: proc(text: string) -> (ok: bool)
 
 //--------------//
 // EXPERIMENTAL //
@@ -1296,7 +1296,7 @@ Shader_Input :: struct {
 
 Pixel_Format :: enum {
 	Unknown,
-	
+
 	RGBA_32_Float,
 	RGB_32_Float,
 	RG_32_Float,
@@ -1452,7 +1452,7 @@ VORBIS_STATE_SIZE :: 300 * mem.Kilobyte
 
 Audio_Stream_Data :: struct {
 	handle: Audio_Stream,
-	
+
 	vorbis: ^stbv.vorbis,
 	vorbis_buffer: stbv.vorbis_alloc,
 	sound: Sound,
@@ -1610,7 +1610,7 @@ State :: struct {
 	render_backend_state: rawptr,
 
 	fs: fs.FontContext,
-	
+
 	close_window_requested: bool,
 
 	// All events for this frame. Cleared when `process_events` run
@@ -1862,7 +1862,7 @@ Gamepad_Index :: int
 
 Gamepad_Axis :: enum {
 	None,
-	
+
 	Left_Stick_X,
 	Left_Stick_Y,
 	Right_Stick_X,
@@ -1873,7 +1873,7 @@ Gamepad_Axis :: enum {
 
 Gamepad_Button :: enum {
 	None,
-	
+
 	// DPAD buttons
 	Left_Face_Up,
 	Left_Face_Down,
