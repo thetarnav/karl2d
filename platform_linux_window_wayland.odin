@@ -452,7 +452,12 @@ keyboard_listener := wl.Keyboard_Listener {
 		s.xkb_keymap = keymap
 		s.xkb_state = xkb.state_new(keymap)
 	},
-	enter = proc "c" (data: rawptr, keyboard: ^wl.Keyboard, serial: c.uint32_t, surface: ^wl.Surface, keys: ^wl.Array) {},
+	enter = proc "c" (data: rawptr, keyboard: ^wl.Keyboard, serial: c.uint32_t, surface: ^wl.Surface, keys: ^wl.Array) {
+		context = s.odin_ctx
+		if serial != 0 {
+			s.input_serial = u32(serial)
+		}
+	},
 	leave = proc "c" (data: rawptr, keyboard: ^wl.Keyboard, serial: c.uint32_t, surface: ^wl.Surface) {
 		context = s.odin_ctx
 
@@ -927,7 +932,7 @@ wl_set_clipboard_text :: proc(text: string) -> bool {
 		return false
 	}
 	wl.data_device_set_selection(s.data_device, s.clipboard_source, s.input_serial)
-	if wl.display_flush(s.display) != 0 {
+	if wl.display_flush(s.display) < 0 {
 		wl_clipboard_clear_source()
 		return false
 	}
