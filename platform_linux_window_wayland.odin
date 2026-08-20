@@ -797,6 +797,12 @@ data_offer_listener := wl.Data_Offer_Listener {
 }
 
 wl_get_clipboard_text :: proc(allocator: runtime.Allocator) -> (string, bool) {
+	// When we own the clipboard, the compositor does not send us a selection event for our
+	// own data. Return the owned text directly instead of going through the data offer.
+	if s.clipboard_owned_text != nil {
+		return strings.clone(string(s.clipboard_owned_text), allocator), true
+	}
+
 	if s.data_device == nil {
 		return "", false
 	}
