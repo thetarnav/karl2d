@@ -5,6 +5,8 @@ on:
     branches:
       - master
   pull_request:
+    branches:
+      - master
   workflow_dispatch:
   schedule:
     - cron: 0 20 * * *
@@ -52,6 +54,10 @@ jobs:
       - name: coordinate_system tests (Y up)
         if: matrix.os == 'windows-latest'
         run: odin test tests/coordinate_system -define:KARL2D_RENDER_BACKEND=nil -define:KARL2D_AUDIO_BACKEND=nil -define:ODIN_TEST_THREADS=1 -define:KARL2D_TEST_Y_UP=true
+
+      - name: clipboard test
+        if: matrix.os == 'windows-latest'
+        run: odin test tests/clipboard -define:KARL2D_RENDER_BACKEND=nil -define:KARL2D_AUDIO_BACKEND=nil -define:ODIN_TEST_THREADS=1
 
       - name: raylib_ports/shaders_texture_waves
         run: odin check examples/raylib_ports/shaders_texture_waves -no-threaded-checker -vet -strict-style

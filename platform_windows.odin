@@ -12,6 +12,8 @@ PLATFORM_WINDOWS :: Platform_Interface {
 	get_window_render_glue = windows_get_window_render_glue,
 	get_events = windows_get_events,
 	set_window_title = windows_set_window_title,
+	get_clipboard_text = windows_get_clipboard_text,
+	set_clipboard_text = windows_set_clipboard_text,
 	get_screen_width = windows_get_screen_width,
 	get_screen_height = windows_get_screen_height,
 	set_window_position = windows_set_window_position,
@@ -275,6 +277,83 @@ windows_get_screen_height :: proc() -> int {
 
 windows_set_window_title :: proc(title: string) {
 	win32.SetWindowTextW(s.hwnd, win32.utf8_to_wstring(title, frame_allocator))
+}
+
+windows_get_clipboard_text :: proc(allocator: runtime.Allocator) -> (string, bool) {
+	if !win32.IsClipboardFormatAvailable(win32.CF_UNICODETEXT) {
+		return "", false
+	}
+
+	if !win32.OpenClipboard(s.hwnd) {
+		return "", false
+	}
+
+	handle := win32.GetClipboardData(win32.CF_UNICODETEXT)
+	if handle == nil {
+		win32.CloseClipboard()
+		return "", false
+	}
+
+	data := win32.GlobalLock(win32.HGLOBAL(handle))
+	if data == nil {
+		win32.CloseClipboard()
+		return "", false
+	}
+
+	data_size := win32.GlobalSize(win32.LPVOID(handle))
+	data_utf16 := slice.from_ptr((^u16)(data), int(data_size / size_of(u16)))
+	text, text_err := win32.utf16_to_utf8(data_utf16, allocator)
+	win32.GlobalUnlock(win32.HGLOBAL(handle))
+	win32.CloseClipboard()
+
+	if text_err != nil {
+		return "", false
+	}
+
+	return text, true
+}
+
+windows_set_clipboard_text :: proc(text: string) -> bool {
+	text_utf16 := win32.utf8_to_wstring(text, frame_allocator)
+	if text_utf16 == nil {
+		return false
+	}
+
+	if !win32.OpenClipboard(s.hwnd) {
+		return false
+	}
+
+	if !win32.EmptyClipboard() {
+		win32.CloseClipboard()
+		return false
+	}
+
+	bytes := win32.SIZE_T((len(text_utf16) + 1) * size_of(u16))
+	handle := win32.HGLOBAL(win32.GlobalAlloc(win32.GMEM_MOVEABLE, bytes))
+	if handle == nil {
+		win32.CloseClipboard()
+		return false
+	}
+
+	data := win32.GlobalLock(handle)
+	if data == nil {
+		win32.GlobalFree(win32.LPVOID(handle))
+		win32.CloseClipboard()
+		return false
+	}
+
+	text_utf16_slice := slice.from_ptr((^u16)(text_utf16), len(text_utf16) + 1)
+	runtime.mem_copy_non_overlapping(data, raw_data(text_utf16_slice), int(bytes))
+	win32.GlobalUnlock(handle)
+
+	if win32.SetClipboardData(win32.CF_UNICODETEXT, win32.HANDLE(handle)) == nil {
+		win32.GlobalFree(win32.LPVOID(handle))
+		win32.CloseClipboard()
+		return false
+	}
+
+	win32.CloseClipboard()
+	return true
 }
 
 // Because positions can be offset in Windows: There is an "inivisble border" on Windows. This makes

@@ -10,6 +10,8 @@ LINUX_WINDOW_X11 :: Linux_Window_Interface {
 	shutdown = x11_shutdown,
 	get_window_render_glue = x11_get_window_render_glue,
 	get_events = x11_get_events,
+	get_clipboard_text = x11_get_clipboard_text,
+	set_clipboard_text = x11_set_clipboard_text,
 	set_title = x11_set_title,
 	get_screen_width = x11_get_screen_width,
 	get_screen_height = x11_get_screen_height,
@@ -33,7 +35,9 @@ import "base:runtime"
 import "log"
 import "core:fmt"
 import "core:slice"
+import "core:time"
 import hm "core:container/handle_map"
+import clipboard "platform_bindings/linux/x11_clipboard"
 
 _ :: log
 _ :: fmt
@@ -44,6 +48,7 @@ foreign import x11_extra "system:X11"
 foreign x11_extra {
 	XDestroyIC :: proc(ic: X.XIC) ---
 	XCloseIM :: proc(im: X.XIM) -> X.Status ---
+	XPutBackEvent :: proc(display: ^X.Display, event: ^X.XEvent) ---
 }
 
 // The horizontal wheel is button 6 and 7. vendor:x11/xlib stops naming buttons at 5.
@@ -90,12 +95,14 @@ x11_init :: proc(
 		.PointerMotion,
 		.StructureNotify,
 		.FocusChange,
+		.PropertyChange,
 	})
 
 	X.MapWindow(s.display, s.window)
 
 	s.delete_msg = X.InternAtom(s.display, "WM_DELETE_WINDOW", false)
 	X.SetWMProtocols(s.display, s.window, &s.delete_msg, 1)
+	x11_init_clipboard()
 
 	// Detectable auto-repeat means a held-down key produces repeated KeyPress events without an
 	// interleaved KeyRelease between them, so we can tell an initial press from a repeat by
@@ -155,6 +162,7 @@ x11_init :: proc(
 }
 
 x11_shutdown :: proc() {
+	x11_release_clipboard()
 	delete(s.events)
 
 	if s.xic != nil {
@@ -200,6 +208,16 @@ x11_get_events :: proc(events: ^[dynamic]Event) {
 		}
 
 		#partial switch event.type {
+		case .SelectionRequest:
+			x11_handle_selection_request(&event.xselectionrequest)
+		case .SelectionNotify:
+			x11_handle_selection_notify(&event.xselection)
+		case .PropertyNotify:
+			x11_handle_clipboard_property(&event.xproperty)
+		case .SelectionClear:
+			if event.xselectionclear.selection == s.clipboard_selection {
+				s.clipboard_owned = false
+			}
 		case .ClientMessage:
 			if X.Atom(event.xclient.data.l[0]) == s.delete_msg {
 				append(events, Event_Close_Window_Requested{})
@@ -398,6 +416,271 @@ _x11_append_typed_runes :: proc(events: ^[dynamic]Event, key_event: ^X.XKeyPress
 				append(events, Event_Typed_Rune { typed = r })
 			}
 		}
+	}
+}
+
+X11_CLIPBOARD_MAX_BYTES :: 4 * 1024 * 1024
+X11_CLIPBOARD_MAX_SENDS :: 8
+X11_CLIPBOARD_WAIT :: 250 * time.Millisecond
+X11_XA_STRING_REPLACEMENT :: u8('?')
+
+x11_init_clipboard :: proc() {
+	s.clipboard_selection = clipboard.XInternAtom(s.display, "CLIPBOARD", false)
+	s.clipboard_targets = clipboard.XInternAtom(s.display, "TARGETS", false)
+	s.clipboard_utf8 = clipboard.XInternAtom(s.display, "UTF8_STRING", false)
+	s.clipboard_text = clipboard.XInternAtom(s.display, "TEXT", false)
+	s.clipboard_incr = clipboard.XInternAtom(s.display, "INCR", false)
+	s.clipboard_property = clipboard.XInternAtom(s.display, "KARL2D_CLIPBOARD", false)
+	s.clipboard_owned = false
+	s.clipboard_read_buffer = make([dynamic]u8, s.allocator)
+	s.clipboard_send_count = 0
+}
+
+x11_release_clipboard :: proc() {
+	if s.display == nil {
+		return
+	}
+
+	if s.clipboard_owned {
+		clipboard.XSetSelectionOwner(s.display, s.clipboard_selection, clipboard.NONE, clipboard.CURRENT_TIME)
+		s.clipboard_owned = false
+	}
+	if s.owned_clipboard != nil {
+		free(raw_data(s.owned_clipboard), s.allocator)
+		s.owned_clipboard = nil
+	}
+	if s.owned_clipboard_latin1 != nil {
+		free(raw_data(s.owned_clipboard_latin1), s.allocator)
+		s.owned_clipboard_latin1 = nil
+	}
+	for i in 0..<s.clipboard_send_count {
+		free(raw_data(s.clipboard_sends[i].data), s.allocator)
+	}
+	s.clipboard_send_count = 0
+	delete(s.clipboard_read_buffer)
+}
+
+x11_set_clipboard_text :: proc(text: string) -> bool {
+	if s.display == nil || len(text) > X11_CLIPBOARD_MAX_BYTES {
+		return false
+	}
+
+	if s.owned_clipboard != nil {
+		free(raw_data(s.owned_clipboard), s.allocator)
+	}
+	if s.owned_clipboard_latin1 != nil {
+		free(raw_data(s.owned_clipboard_latin1), s.allocator)
+	}
+	s.owned_clipboard = make([]u8, len(text), s.allocator)
+	copy(s.owned_clipboard, text)
+	s.owned_clipboard_latin1 = make([]u8, len(text), s.allocator)
+	latin1_count := 0
+	for r in text {
+		// XA_STRING is ISO-8859-1. Use '?' for characters outside Latin-1.
+		if r <= 0xff {
+			s.owned_clipboard_latin1[latin1_count] = u8(r)
+		} else {
+			s.owned_clipboard_latin1[latin1_count] = X11_XA_STRING_REPLACEMENT
+		}
+		latin1_count += 1
+	}
+	s.owned_clipboard_latin1 = s.owned_clipboard_latin1[:latin1_count]
+
+	clipboard.XSetSelectionOwner(s.display, s.clipboard_selection, s.window, clipboard.CURRENT_TIME)
+	X.Flush(s.display)
+	s.clipboard_owned = clipboard.XGetSelectionOwner(s.display, s.clipboard_selection) == s.window
+	if !s.clipboard_owned {
+		free(raw_data(s.owned_clipboard), s.allocator)
+		free(raw_data(s.owned_clipboard_latin1), s.allocator)
+		s.owned_clipboard = nil
+		s.owned_clipboard_latin1 = nil
+	}
+	return s.clipboard_owned
+}
+
+x11_get_clipboard_text :: proc(allocator: runtime.Allocator) -> (string, bool) {
+	if s.display == nil || s.clipboard_selection == 0 {
+		return "", false
+	}
+
+	owner := clipboard.XGetSelectionOwner(s.display, s.clipboard_selection)
+	if owner == clipboard.NONE {
+		return "", false
+	}
+
+	s.clipboard_read_active = true
+	s.clipboard_read_incr = false
+	s.clipboard_read_target = s.clipboard_utf8
+	s.clipboard_read_ok = false
+	runtime.clear(&s.clipboard_read_buffer)
+	clipboard.XDeleteProperty(s.display, s.window, s.clipboard_property)
+	clipboard.XConvertSelection(s.display, s.clipboard_selection, s.clipboard_read_target, s.clipboard_property, s.window, clipboard.CURRENT_TIME)
+	clipboard.XFlush(s.display)
+
+	start := time.tick_now()
+	deadline := time.tick_add(start, X11_CLIPBOARD_WAIT)
+	pending_events := make([dynamic]Event, s.allocator)
+	for s.clipboard_read_active && time.tick_diff(deadline, time.tick_now()) > 0 {
+		if X.Pending(s.display) <= 0 {
+			time.sleep(1 * time.Millisecond)
+			continue
+		}
+		event: X.XEvent
+		X.NextEvent(s.display, &event)
+		XPutBackEvent(s.display, &event)
+		x11_get_events(&pending_events)
+		append(&s.events, ..pending_events[:])
+		runtime.clear(&pending_events)
+	}
+	delete(pending_events)
+
+	s.clipboard_read_active = false
+	if !s.clipboard_read_ok {
+		return "", false
+	}
+	result := make([]u8, len(s.clipboard_read_buffer), allocator)
+	copy(result, s.clipboard_read_buffer[:])
+	return string(result), true
+}
+
+x11_handle_selection_notify :: proc(event: ^X.XSelectionEvent) {
+	if !s.clipboard_read_active || event.requestor != s.window {
+		return
+	}
+	if event.property == 0 {
+		if s.clipboard_read_target == s.clipboard_utf8 {
+			s.clipboard_read_target = s.clipboard_text
+		} else if s.clipboard_read_target == s.clipboard_text {
+			s.clipboard_read_target = clipboard.XA_STRING
+		} else if s.clipboard_read_target == clipboard.XA_STRING {
+			s.clipboard_read_ok = false
+			s.clipboard_read_active = false
+			return
+		} else {
+			s.clipboard_read_ok = false
+			s.clipboard_read_active = false
+			return
+		}
+		clipboard.XConvertSelection(s.display, s.clipboard_selection, s.clipboard_read_target, s.clipboard_property, s.window, clipboard.CURRENT_TIME)
+		clipboard.XFlush(s.display)
+		return
+	}
+	x11_read_clipboard_property(event.property)
+}
+
+x11_read_clipboard_property :: proc(property: X.Atom) {
+	actual_type: X.Atom
+	actual_format: i32
+	nitems, bytes_after: uint
+	data: rawptr
+	status := clipboard.XGetWindowProperty(
+		s.display, s.window, property, 0, X11_CLIPBOARD_MAX_BYTES / 4, true,
+		clipboard.ANY_PROPERTY_TYPE, &actual_type, &actual_format, &nitems, &bytes_after, &data,
+	)
+	if status != 0 || bytes_after != 0 {
+		if data != nil { X.Free(data) }
+		s.clipboard_read_active = false
+		s.clipboard_read_ok = false
+		return
+	}
+	if actual_type == s.clipboard_incr {
+		s.clipboard_read_incr = true
+		if data != nil { X.Free(data) }
+		return
+	}
+	if s.clipboard_read_incr && actual_format == 8 && nitems == 0 {
+		if data != nil { X.Free(data) }
+		s.clipboard_read_ok = true
+		s.clipboard_read_active = false
+		s.clipboard_read_incr = false
+		return
+	}
+	if actual_format != 8 || (nitems > 0 && data == nil) ||
+		len(s.clipboard_read_buffer) + int(nitems) > X11_CLIPBOARD_MAX_BYTES {
+		if data != nil { X.Free(data) }
+		s.clipboard_read_active = false
+		s.clipboard_read_ok = false
+		return
+	}
+	if nitems > 0 {
+		for b in slice.from_ptr((^u8)(data), int(nitems)) {
+			append(&s.clipboard_read_buffer, b)
+		}
+	}
+	if data != nil {
+		X.Free(data)
+	}
+	s.clipboard_read_ok = true
+	s.clipboard_read_active = false
+}
+
+x11_handle_clipboard_property :: proc(event: ^X.XPropertyEvent) {
+	x11_send_clipboard_chunk(event)
+	if !s.clipboard_read_active || event.window != s.window || event.atom != s.clipboard_property {
+		return
+	}
+	if s.clipboard_read_incr && event.state == .PropertyNewValue {
+		x11_read_clipboard_property(s.clipboard_property)
+	}
+}
+
+x11_handle_selection_request :: proc(event: ^X.XSelectionRequestEvent) {
+	if !s.clipboard_owned || event.selection != s.clipboard_selection {
+		return
+	}
+	property := event.property
+	if property == 0 { property = event.target }
+	ok := false
+	if event.target == s.clipboard_targets {
+		targets := [4]X.Atom{s.clipboard_targets, s.clipboard_utf8, s.clipboard_text, clipboard.XA_STRING}
+		clipboard.XChangeProperty(s.display, event.requestor, property, clipboard.XA_ATOM, 32, clipboard.PROP_MODE_REPLACE, raw_data(targets[:]), len(targets))
+		ok = true
+	} else if event.target == s.clipboard_utf8 || event.target == s.clipboard_text || event.target == clipboard.XA_STRING {
+		data := s.owned_clipboard
+		data_type := s.clipboard_utf8
+		if event.target == clipboard.XA_STRING {
+			data = s.owned_clipboard_latin1
+			data_type = clipboard.XA_STRING
+		}
+		if len(data) <= 65536 {
+			clipboard.XChangeProperty(s.display, event.requestor, property, data_type, 8, clipboard.PROP_MODE_REPLACE, raw_data(data), i32(len(data)))
+			ok = true
+		} else if s.clipboard_send_count < X11_CLIPBOARD_MAX_SENDS {
+			incr_size := u32(len(data))
+			clipboard.XChangeProperty(s.display, event.requestor, property, s.clipboard_incr, 32, clipboard.PROP_MODE_REPLACE, &incr_size, 1)
+			send_data := make([]u8, len(data), s.allocator)
+			copy(send_data, data)
+			if event.requestor != s.window {
+				X.SelectInput(s.display, event.requestor, {.PropertyChange})
+			}
+			s.clipboard_sends[s.clipboard_send_count] = X11_Clipboard_Send{window = event.requestor, property = property, target = event.target, data = send_data, offset = 0}
+			s.clipboard_send_count += 1
+			ok = true
+		}
+	}
+	reply := X.XEvent{xselection = {type = .SelectionNotify, display = s.display, requestor = event.requestor, selection = event.selection, target = event.target, property = ok ? property : 0, time = event.time}}
+	clipboard.XSendEvent(s.display, event.requestor, false, {}, &reply)
+	clipboard.XFlush(s.display)
+}
+
+x11_send_clipboard_chunk :: proc(event: ^X.XPropertyEvent) {
+	for i in 0..<s.clipboard_send_count {
+		request := &s.clipboard_sends[i]
+		if request.window != event.window || request.property != event.atom || event.state != .PropertyDelete { continue }
+		remaining := len(request.data) - request.offset
+		count := min(remaining, 65536)
+		data_type := s.clipboard_utf8
+		if request.target == clipboard.XA_STRING {
+			data_type = clipboard.XA_STRING
+		}
+		clipboard.XChangeProperty(s.display, request.window, request.property, data_type, 8, clipboard.PROP_MODE_REPLACE, raw_data(request.data[request.offset:request.offset+count]), i32(count))
+		request.offset += count
+		if count == 0 {
+			free(raw_data(request.data), s.allocator)
+			s.clipboard_sends[i] = s.clipboard_sends[s.clipboard_send_count-1]
+			s.clipboard_send_count -= 1
+		}
+		return
 	}
 }
 
@@ -752,6 +1035,23 @@ X11_State :: struct {
 	mouse_locked: bool,
 	events: [dynamic]Event,
 
+	clipboard_selection: X.Atom,
+	clipboard_targets: X.Atom,
+	clipboard_utf8: X.Atom,
+	clipboard_text: X.Atom,
+	clipboard_incr: X.Atom,
+	clipboard_property: X.Atom,
+	owned_clipboard: []u8,
+	owned_clipboard_latin1: []u8,
+	clipboard_owned: bool,
+	clipboard_read_active: bool,
+	clipboard_read_incr: bool,
+	clipboard_read_target: X.Atom,
+	clipboard_read_ok: bool,
+	clipboard_read_buffer: [dynamic]u8,
+	clipboard_sends: [X11_CLIPBOARD_MAX_SENDS]X11_Clipboard_Send,
+	clipboard_send_count: int,
+
 	xim: X.XIM,
 	xic: X.XIC,
 	detectable_autorepeat: bool,
@@ -761,10 +1061,17 @@ X11_State :: struct {
 	key_held: [256]bool,
 }
 
+X11_Clipboard_Send :: struct {
+	window: X.Window,
+	property: X.Atom,
+	target: X.Atom,
+	data: []u8,
+	offset: int,
+}
+
 X11_Cursor :: struct {
 	handle: Custom_Cursor,
 	cursor: X.Cursor,
 }
 
 s: ^X11_State
-

@@ -120,11 +120,15 @@ linux_gl_wayland_glue_make_context :: proc(s: ^Linux_GL_Wayland_Glue_State, opti
 	}
 
 	if egl.MakeCurrent(s.egl_display, s.egl_surface, s.egl_surface, s.egl_context) {
-		egl.SwapInterval(s.egl_display, 1)
 		gl.load_up_to(3, 3, egl.gl_set_proc_address)
 
-		// vsync
-		egl.SwapInterval(s.egl_display, 1)
+		// Disable vsync on Wayland. With vsync=1, eglSwapBuffers blocks until the
+		// compositor sends a next-frame callback. When the window is unfocused or
+		// occluded, the compositor may stop sending frame events entirely, which
+		// freezes the app and prevents Wayland events (including clipboard
+		// data_source.send) from being dispatched. With vsync=0, SwapBuffers
+		// returns immediately, keeping the event loop responsive at all times.
+		egl.SwapInterval(s.egl_display, 0)
 
 		return true
 	}
@@ -133,6 +137,13 @@ linux_gl_wayland_glue_make_context :: proc(s: ^Linux_GL_Wayland_Glue_State, opti
 }
 
 linux_gl_wayland_glue_present :: proc(s: ^Linux_GL_Wayland_Glue_State) {
+	// Dispatch pending Wayland events before the potentially-blocking SwapBuffers.
+	// On Wayland, eglSwapBuffers with vsync=1 blocks until the compositor sends a
+	// frame callback. When the window is unfocused/occluded, the compositor may stop
+	// sending frame events, freezing the app. By dispatching here, we ensure events
+	// like data_source.send (clipboard) are processed even while SwapBuffers blocks.
+	wl.display_dispatch_pending(s.display)
+	wl.display_flush(s.display)
 	egl.SwapBuffers(s.egl_display, s.egl_surface)
 }
 
