@@ -950,35 +950,21 @@ data_source_listener := wl.Data_Source_Listener {
 	send = proc "c" (data: rawptr, source: ^wl.Data_Source, mime_type: cstring, fd: c.int32_t) {
 		context = s.odin_ctx
 		write_fd := linux.Fd(fd)
-		flags, flags_err := linux.fcntl_getfl(write_fd, linux.F_GETFL)
-		if flags_err != .NONE || linux.fcntl_setfl(write_fd, linux.F_SETFL, flags | {.NONBLOCK}) != .NONE {
-			linux.close(write_fd)
-			return
+
+		// poll for write readiness BEFORE calling write.
+		// This avoids ever blocking inside write() on a blocking fd.
+		pfd := posix.pollfd {
+			fd     = posix.FD(write_fd),
+			events = {posix.Poll_Event_Bits.OUT},
 		}
-		if s.clipboard_owned_text != nil {
-			bytes := s.clipboard_owned_text
-			deadline := time.tick_add(time.tick_now(), WAYLAND_CLIPBOARD_TRANSFER_TIMEOUT)
-			for len(bytes) > 0 && time.tick_diff(deadline, time.tick_now()) > 0 {
-				n, err := linux.write(write_fd, bytes)
-				if n > 0 {
-					bytes = bytes[n:]
-					continue
-				}
-				if err == .EINTR {
-					continue
-				}
-				if err != .EAGAIN && err != .EWOULDBLOCK {
-					break
-				}
-				pfd := posix.pollfd {
-					fd = posix.FD(write_fd),
-					events = {posix.Poll_Event_Bits.OUT},
-				}
-				if posix.poll(&pfd, 1, 10) < 0 {
-					break
-				}
+		ready := posix.poll(&pfd, 1, 100) // 100ms timeout
+
+		if ready > 0 && (pfd.revents & {posix.Poll_Event_Bits.OUT}) != {} {
+			if s.clipboard_owned_text != nil {
+				linux.write(write_fd, s.clipboard_owned_text)
 			}
 		}
+
 		linux.close(write_fd)
 	},
 	cancelled = proc "c" (data: rawptr, source: ^wl.Data_Source) {

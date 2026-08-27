@@ -15,9 +15,8 @@ init :: proc() {
 }
 
 step :: proc() -> bool {
-	if !k2.update() {
-		return false
-	}
+
+	k2.update() or_return
 
 	if k2.key_went_down(.N1) {
 		last_set_ok = k2.set_clipboard_text("Hello from Karl2D!")
